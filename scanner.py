@@ -123,6 +123,7 @@ class ScanDelegate(DefaultDelegate):
             busid = uuid[12:16]  # next 4 chars for busid
             locationid = uuid[16:20]  # next 4 chars for locationid
             identifier2 = uuid[20:]  # remaining chars (should be 567812345678)
+            
 
             # validate identifiers
             if identifier1 == "1234" and identifier2 == "567812345678":
