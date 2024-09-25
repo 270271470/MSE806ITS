@@ -143,7 +143,7 @@ locations = load_locations()
 scanner = Scanner().withDelegate(ScanDelegate(locations))
 
 # scan continuously - stop with Cntrl-C
-print("Starting BLE scan...")
+print("Scanning for valid Passenger Beacons...")
 try:
     while True:
         scanner.scan(10.0)  # scan for 10 seconds in each loop iteration
