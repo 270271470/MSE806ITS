@@ -10,14 +10,12 @@ Command:        sudo /home/mauzer(or hasitha or prasad)/beacon-project/venv/bin/
 
 # import libs needed
 from bluepy.btle import Scanner, DefaultDelegate
-import struct
 import json
 import os
 from datetime import datetime
 
 # load location mappings from resources directory (this will probably be replaced by a database or API query)
 def load_locations(filename="locations.txt"):
-    # Define the full path to the file in the /resources directory
     resources_path = os.path.join(os.path.dirname(__file__), "resources", filename)
     locations = {}
     with open(resources_path, 'r') as file:
@@ -26,24 +24,36 @@ def load_locations(filename="locations.txt"):
             locations[int(bus_stop)] = coordinates.strip()
     return locations
 
-# save data to onboard.json in the /livedata directory (will be used for API and/or db interaction)
-def save_onboard_data(userid, location, coordinates, filename="livedata/onboard.json"):
-    directory = os.path.join(os.path.dirname(__file__), "livedata")
-    filepath = os.path.join(directory, "onboard.json")
+# save data to bus-specific JSON file in the appropriate year/month/day directory
+def save_onboard_data(userid, busid, locationid, coordinates):
+    # create dir structure based on the current year, month and day
+    now = datetime.now()
+    year = now.strftime("%Y")
+    month = now.strftime("%m")
+    day = now.strftime("%d")
     
-    # create directory if it doesn't exist
-    if not os.path.exists(directory):
-        os.makedirs(directory)
+    # base directory for data storage
+    base_directory = os.path.join(os.path.dirname(__file__), "livedata", year, month, day)
+    
+    # create directories if they do not exist
+    if not os.path.exists(base_directory):
+        os.makedirs(base_directory)
 
-    timestamp = datetime.now().isoformat()  # to map the time a user was at a location
+    # def file path for specific bus
+    filename = f"bus-{busid}.json"
+    filepath = os.path.join(base_directory, filename)
+
+    # prepare entry with the current timestamp
+    timestamp = now.isoformat()
     entry = {
         "userid": userid,
-        "location": f"Bus stop {location}",
+        "busid": busid,
+        "location": f"Bus stop {locationid}",
         "coordinates": coordinates,
         "timestamp": timestamp
     }
 
-    # read existing data, append new entry + save
+    # get existing data + append new entry +  save
     try:
         with open(filepath, 'r') as file:
             data = json.load(file)
@@ -63,22 +73,68 @@ class ScanDelegate(DefaultDelegate):
 
     def handleDiscovery(self, dev, isNewDev, isNewData):
         for (adtype, desc, value) in dev.getScanData():
-            if desc == "Manufacturer" and len(value) >= 48:
-                try:
-                    uuid = value[8:40]
-                    major = struct.unpack(">H", bytes.fromhex(value[40:44]))[0]
-                    minor = struct.unpack(">H", bytes.fromhex(value[44:48]))[0]
+            # separate handling for Android and iPhone based on value content
+            if desc == "Manufacturer" and len(value) >= 40:
+                # check if beacon is from an Android device
+                if value.startswith("4c000215"):
+                    self.handle_android_beacon(value)
+                # check if beacon is from an iPhone device
+                elif value.startswith("4c000215"):
+                    self.handle_iphone_beacon(value)
 
-                    # check if major is 5 digits and minor is within range
-                    if 10000 <= major <= 99999 and 1001 <= minor <= 1999:
-                        coordinates = self.locations.get(minor, "Unknown Location")
-                        if coordinates != "Unknown Location":
-                            print(f"Detected iBeacon: UserID: {major}, Bus Stop: {minor}, Coordinates: {coordinates}")
-                            save_onboard_data(major, minor, coordinates)
-                        else:
-                            print(f"Location for Bus Stop {minor} not found in locations.txt.")
-                except Exception as e:
-                    print(f"Failed to parse iBeacon data: {e}")
+    def handle_android_beacon(self, value):
+        """
+        handle parsing and processing for Android beacons
+        """
+        try:
+            # extract UUID from transmitted data
+            uuid = value[8:40]  # extract, assuming starts at 8th character
+
+            # parse UUID to extract relevant parts
+            userid = uuid[0:8]  # first 8 chars for userid
+            identifier1 = uuid[8:12]  # next 4 chars (should be 1234)
+            busid = uuid[12:16]  # next 4 chars for busid
+            locationid = uuid[16:20]  # next 4 chars for locationid
+            identifier2 = uuid[20:]  # remaining chars (should be 567812345678)
+
+            # validate identifiers
+            if identifier1 == "1234" and identifier2 == "567812345678":
+                coordinates = self.locations.get(int(locationid), "Unknown Location")
+                if coordinates != "Unknown Location":
+                    # print only valid beacons
+                    print(f"Valid Beacon: UserID: {userid}, BusID: {busid}, LocationID: {locationid}, Coordinates: {coordinates}")
+                    save_onboard_data(userid, busid, locationid, coordinates)
+
+        except Exception as e:
+            # suppress errors that are not valid beacons
+            pass
+
+    def handle_iphone_beacon(self, value):
+        """
+        handles parsing + processing for iPhone beacons
+        """
+        try:
+            # extract from the transmitted data
+            uuid = value[8:40]  # extract UUID assuming starts at 8th char
+
+            # parse UUID to extract relevant parts
+            userid = uuid[0:8]  # first 8 chars for userid
+            identifier1 = uuid[8:12]  # next 4 chars (should be 1234)
+            busid = uuid[12:16]  # next 4 chars for busid
+            locationid = uuid[16:20]  # next 4 chars for locationid
+            identifier2 = uuid[20:]  # remaining chars (should be 567812345678)
+
+            # validate identifiers
+            if identifier1 == "1234" and identifier2 == "567812345678":
+                coordinates = self.locations.get(int(locationid), "Unknown Location")
+                if coordinates != "Unknown Location":
+                    # print only if valid beacon
+                    print(f"Valid Beacon: UserID: {userid}, BusID: {busid}, LocationID: {locationid}, Coordinates: {coordinates}")
+                    save_onboard_data(userid, busid, locationid, coordinates)
+
+        except Exception as e:
+            # suppress errors that are not valid beacons
+            pass
 
 # load bus stop locations
 locations = load_locations()
